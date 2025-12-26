@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Send } from "lucide-react";
-import { verifyCustomer } from "../workerAgents/verificationAgent";
+import { generateSanctionLetter } from "../workerAgents/sanctionAgent";
 
-/* ===============================
-   🔢 Income Extraction Utility
-================================ */
+// Income Extraction Utility
+
 const extractIncome = (message) => {
   const text = message.toLowerCase().replace(/,/g, "").trim();
 
@@ -38,6 +37,7 @@ export default function LoanChat() {
     income: null,
     kycVerified: false,
     customer: null,
+    requestedAmount: null,
   });
 
   const [isTyping, setIsTyping] = useState(false);
@@ -77,35 +77,33 @@ export default function LoanChat() {
     }, 1200);
   };
 
-  /* ===============================
-     🧠 MASTER AGENT LOGIC
-  ================================ */
-  const generateBotReply = (userInput) => {
+//    MASTER AGENT LOGIC
+  const generateBotReply = async (userInput) => {
     const lower = userInput.toLowerCase();
 
-    /* ---------- STAGE 1: LOAN TYPE ---------- */
+    // STAGE 1: LOAN TYPE
     if (stage === "LOAN_TYPE") {
       if (lower.includes("personal")) {
         setContext((p) => ({ ...p, loanType: "PERSONAL" }));
         setStage("INCOME");
-        return "Great choice 😊 Personal loans are perfect for travel, weddings, or emergencies.\n\nCould you please share your **monthly income**?";
+        return "Great choice 😊 Personal loans are perfect for travel, weddings, or emergencies.\n\nCould you please share your monthly income?";
       }
 
       if (lower.includes("business")) {
         setContext((p) => ({ ...p, loanType: "BUSINESS" }));
         setStage("INCOME");
-        return "Awesome! Business loans help grow ventures.\n\nPlease share your **monthly income** to proceed.";
+        return "Awesome! Business loans help grow ventures.\n\nPlease share your monthly income to proceed.";
       }
 
-      return "We currently offer **personal** and **business** loans. Which one would you like to explore?";
+      return "We currently offer personal and business loans. Which one would you like to explore?";
     }
 
-    /* ---------- STAGE 2: INCOME ---------- */
+    // STAGE 2: INCOME
     if (stage === "INCOME") {
       const income = extractIncome(userInput);
 
       if (income === null) {
-        return "Could you please share your income in numbers? For example: **30,000** or **30k**.";
+        return "Could you please share your income in numbers? For example: 30,000 or 30k.";
       }
 
       if (income <= 0) {
@@ -123,46 +121,125 @@ export default function LoanChat() {
 
       return (
         `Thanks 😊 I’ve noted your income as ₹${income.toLocaleString()}.\n\n` +
-        "To continue, please share your **registered name or mobile number** for KYC verification."
+        "To continue, please share your registered name or mobile number for KYC verification."
       );
     }
 
-    /* ---------- STAGE 3: KYC ---------- */
+    // STAGE 3: KYC VERIFICATION
     if (stage === "KYC") {
-      const result = verifyCustomer(userInput);
+  try {
+    const res = await fetch("http://localhost:5000/api/agent/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: userInput }),
+    });
 
-      if (result.status === "VERIFIED") {
-        setContext((p) => ({
-          ...p,
-          kycVerified: true,
-          customer: result.customer,
-        }));
-        setStage("UNDERWRITING");
+    const result = await res.json();
 
-        return (
-          `${result.message} ✅\n\n` +
-          "Now I’ll quickly check your **credit eligibility** 📊"
-        );
-      }
+    if (result.status === "VERIFIED") {
+      setContext((p) => ({
+        ...p,
+        kycVerified: true,
+        customer: result.customer,
+      }));
+      setStage("UNDERWRITING");
 
-      if (result.status === "PENDING") {
-        return `${result.message} Please complete your KYC before proceeding.`;
-      }
-
-      return "I couldn’t find your KYC details. Please re-check your **registered name or mobile number**.";
+      return (
+        "KYC verified successfully ✅\n\n" +
+        "Now let’s proceed to credit evaluation 📊\n\n" +
+        "How much loan amount are you looking for?"
+      );
     }
 
-    /* ---------- STAGE 4: UNDERWRITING (placeholder) ---------- */
+    if (result.status === "PENDING") {
+      return "Your KYC is pending. Please complete your KYC before proceeding.";
+    }
+
+    if (result.status === "NOT_FOUND") {
+      return "I couldn’t find your KYC details. Please re-check your registered name or mobile number.";
+    }
+
+    return "Something went wrong during verification. Please try again.";
+
+  } catch (error) {
+    console.error("KYC API error:", error);
+    return "⚠️ Unable to verify KYC right now. Please try again in a moment.";
+  }
+}
+    //  STAGE 4: UNDERWRITING (placeholder)
+    
     if (stage === "UNDERWRITING") {
+  const amount = extractIncome(userInput);
+
+  if (!amount || amount <= 0) {
+    return "Please enter a valid loan amount (e.g., 2,00,000 or 2L).";
+  }
+setContext((p) => ({ ...p, requestedAmount: amount }));
+  try {
+    const res = await fetch("http://localhost:5000/api/agent/underwrite", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        customer: context.customer,
+        income: context.income,
+        requestedAmount: amount,
+      }),
+    });
+
+    const result = await res.json();
+
+    // ❌ REJECTED
+    if (result.status === "REJECTED") {
       setStage("DONE");
       return (
-        "🎉 Your profile looks good!\n\n" +
-        "Based on your income and KYC, you are **eligible** to proceed further.\n" +
-        "I’ll now generate your personalized loan offer."
+        `❌ Unfortunately, your loan cannot be approved.\n\n` +
+        `Reason: ${result.reason}\n` +
+        `Credit Score: ${result.creditScore}`
       );
     }
 
-    return "Our conversation is complete 😊 If you’d like to start again, just say *hi*.";
+    // 🧾 SALARY SLIP REQUIRED
+    if (result.status === "SALARY_SLIP") {
+      setStage("DONE");
+      return (
+        `🧾 Additional verification required.\n\n` +
+        `Your credit score is ${result.creditScore}, but the requested amount exceeds your pre-approved limit of ₹${result.limit.toLocaleString()}.\n\n` +
+        `Please upload your salary slip to continue.`
+      );
+    }
+
+    // ✅ APPROVED
+    if (result.status === "APPROVED") {
+  // ✅ Trigger sanction letter AFTER underwriting approves
+  generateSanctionLetter({
+    customer: context.customer,
+    loanAmount: amount,
+    emi: result.emi,
+    creditScore: result.creditScore,
+  });
+
+  setStage("DONE");
+
+  return (
+    `🎉 **Loan Approved!**\n\n` +
+    `Approved Amount: ₹${amount.toLocaleString()}\n` +
+    `Credit Score: ${result.creditScore}\n` +
+    `Estimated EMI: ₹${result.emi}\n\n` +
+    `📄 Your **sanction letter has been generated and downloaded**.\n` +
+    `Thank you for choosing Tata Capital!`
+  );
+}
+
+    return "Something went wrong during underwriting. Please try again.";
+
+  } catch (error) {
+    console.error("Underwriting API error:", error);
+    return "⚠️ Unable to process underwriting right now. Please try again later.";
+  }
+}
+    // STAGE 5: DONE
+
+    return "Our conversation is complete 😊 If you’d like to start again, just say hi.";
   };
 
   return (
