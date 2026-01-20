@@ -1,21 +1,33 @@
-import crm from "../data/crm.json" assert { type: "json" };
+import Customer from "../models/Customer.js";
 
-export const verifyCustomer = (input) => {
-  const cleaned = input.replace(/\D/g, "");
+export const verifyCustomer = async (input) => {
+  const trimmed = input.trim();
+  const phone = trimmed.replace(/\D/g, "");
 
-  const customer = crm.find(
-    (c) =>
-      cleaned.includes(c.phone) ||
-      input.toLowerCase().includes(c.name.toLowerCase())
-  );
+  let customer = null;
+
+  // 1️⃣ Phone match (most reliable)
+  if (phone.length === 10) {
+    customer = await Customer.findOne({ phone });
+  }
+
+  // 2️⃣ Name match (case-insensitive, partial)
+  if (!customer) {
+    customer = await Customer.findOne({
+      name: { $regex: `^${trimmed}`, $options: "i" },
+    });
+  }
 
   if (!customer) {
     return { status: "NOT_FOUND" };
   }
 
   if (customer.kycStatus !== "VERIFIED") {
-    return { status: "PENDING", name: customer.name };
+    return { status: "PENDING" };
   }
 
-  return { status: "VERIFIED", customer };
+  return {
+    status: "VERIFIED",
+    customer,
+  };
 };

@@ -1,295 +1,207 @@
-import React, { useState, useEffect, useRef } from "react";
-import { Send } from "lucide-react";
-import { generateSanctionLetter } from "../workerAgents/sanctionAgent";
+import { useState } from "react";
 
-// Income Extraction Utility
-
-const extractIncome = (message) => {
-  const text = message.toLowerCase().replace(/,/g, "").trim();
-
-  if (/(\d+(\.\d+)?)\s?k/.test(text)) {
-    return parseFloat(text.match(/(\d+(\.\d+)?)/)[0]) * 1000;
-  }
-
-  if (/(\d+(\.\d+)?)\s?(l|lakh)/.test(text)) {
-    return parseFloat(text.match(/(\d+(\.\d+)?)/)[0]) * 100000;
-  }
-
-  const match = text.match(/\d+/);
-  return match ? parseInt(match[0], 10) : null;
+const STAGES = {
+  LOAN_TYPE: "LOAN_TYPE",
+  INCOME: "INCOME",
+  KYC: "KYC",
+  UNDERWRITING: "UNDERWRITING",
+  DONE: "DONE",
 };
 
 export default function LoanChat() {
   const [messages, setMessages] = useState([
-    {
-      sender: "Ava 🤖",
-      text: "Hi there 👋 I’m Ava, your Tata Capital Loan Assistant. What type of loan are you looking for today?",
-      time: new Date(),
-    },
+    { sender: "bot", text: "Hi 👋 I’m Ava from Tata Capital. How can I help you today?" },
+    { sender: "bot", text: "Are you looking for a personal loan?" },
   ]);
 
   const [input, setInput] = useState("");
-  const [stage, setStage] = useState("LOAN_TYPE"); 
-  // LOAN_TYPE → INCOME → KYC → UNDERWRITING → DONE
+  const [stage, setStage] = useState(STAGES.LOAN_TYPE);
+  const [isThinking, setIsThinking] = useState(false);
 
   const [context, setContext] = useState({
-    loanType: null,
     income: null,
-    kycVerified: false,
     customer: null,
-    requestedAmount: null,
+    kycAttempts: 0,
+    underwritingAttempts: 0,
   });
 
-  const [isTyping, setIsTyping] = useState(false);
-  const endRef = useRef(null);
+  const think = async (text = "Checking…") => {
+  setIsThinking(true);
+  addBot(text);
+  await new Promise((r) => setTimeout(r, 700));
+  setIsThinking(false);
+};
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isTyping]);
+  const addBot = (text) =>
+    setMessages((m) => [...m, { sender: "bot", text }]);
 
-  const sendMessage = () => {
-    if (!input.trim()) return;
+  const addUser = (text) =>
+    setMessages((m) => [...m, { sender: "user", text }]);
 
-    const userMsg = {
-      sender: "You 💬",
-      text: input.trim(),
-      time: new Date(),
-    };
-
-    setMessages((prev) => [...prev, userMsg]);
-    const userInput = input.trim();
-    setInput("");
-
-    setIsTyping(true);
-    setTimeout(() => {
-      const botReply = generateBotReply(userInput);
-      if (botReply) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            sender: "Ava 🤖",
-            text: botReply,
-            time: new Date(),
-          },
-        ]);
-      }
-      setIsTyping(false);
-    }, 1200);
+  const parseAmount = (text) => {
+    const t = text.toLowerCase().replace(/,/g, "");
+    if (t.includes("k")) return parseFloat(t) * 1000;
+    if (t.includes("l")) return parseFloat(t) * 100000;
+    const n = t.match(/\d+/);
+    return n ? parseInt(n[0]) : 0;
   };
 
-//    MASTER AGENT LOGIC
-  const generateBotReply = async (userInput) => {
-    const lower = userInput.toLowerCase();
+  const handleSend = async () => {
+    if (!input.trim()) return;
 
-    // STAGE 1: LOAN TYPE
-    if (stage === "LOAN_TYPE") {
-      if (lower.includes("personal")) {
-        setContext((p) => ({ ...p, loanType: "PERSONAL" }));
-        setStage("INCOME");
-        return "Great choice 😊 Personal loans are perfect for travel, weddings, or emergencies.\n\nCould you please share your monthly income?";
-      }
+    addUser(input);
+    const userInput = input;
+    setInput("");
 
-      if (lower.includes("business")) {
-        setContext((p) => ({ ...p, loanType: "BUSINESS" }));
-        setStage("INCOME");
-        return "Awesome! Business loans help grow ventures.\n\nPlease share your monthly income to proceed.";
-      }
-
-      return "We currently offer personal and business loans. Which one would you like to explore?";
+    // ---------------- STAGE 1: LOAN TYPE ----------------
+    if (stage === STAGES.LOAN_TYPE) {
+      setStage(STAGES.INCOME);
+      addBot("Great! Please tell me your monthly income.");
+      return;
     }
 
-    // STAGE 2: INCOME
-    if (stage === "INCOME") {
-      const income = extractIncome(userInput);
-
-      if (income === null) {
-        return "Could you please share your income in numbers? For example: 30,000 or 30k.";
+    // ---------------- STAGE 2: INCOME ----------------
+    if (stage === STAGES.INCOME) {
+      const income = parseAmount(userInput);
+      if (!income || income <= 0) {
+        addBot("Please enter a valid income (e.g., 60k, 50000).");
+        return;
       }
 
-      if (income <= 0) {
-        return (
-          "Hmm 🤔 it looks like your income is ₹0.\n\n" +
-          "Unfortunately, we can’t proceed with a standard loan without income.\n" +
-          "You may consider:\n" +
-          "1️⃣ Secured loan (against gold/property)\n" +
-          "2️⃣ Co-applicant loan"
-        );
-      }
-
-      setContext((p) => ({ ...p, income }));
-      setStage("KYC");
-
-      return (
-        `Thanks 😊 I’ve noted your income as ₹${income.toLocaleString()}.\n\n` +
-        "To continue, please share your registered name or mobile number for KYC verification."
-      );
+      setContext((c) => ({ ...c, income }));
+      setStage(STAGES.KYC);
+      addBot("Thanks! Please enter your **registered name or mobile number** 📱");
+      return;
     }
 
-    // STAGE 3: KYC VERIFICATION
-    if (stage === "KYC") {
+    // ---------------- STAGE 3: KYC ----------------
+    if (stage === STAGES.KYC) {
   try {
-    const res = await fetch("http://localhost:5000/api/agent/verify", {
+    await think("Verifying your KYC…");
+
+    const res = await fetch("/api/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ input: userInput }),
     });
 
+    if (!res.ok) throw new Error("KYC failed");
+
     const result = await res.json();
 
     if (result.status === "VERIFIED") {
-      setContext((p) => ({
-        ...p,
-        kycVerified: true,
-        customer: result.customer,
-      }));
-      setStage("UNDERWRITING");
-
-      return (
-        "KYC verified successfully ✅\n\n" +
-        "Now let’s proceed to credit evaluation 📊\n\n" +
-        "How much loan amount are you looking for?"
-      );
+      setContext((c) => ({ ...c, customer: result.customer, kycAttempts: 0 }));
+      setStage(STAGES.UNDERWRITING);
+      addBot("✅ KYC verified successfully!");
+      addBot("How much **loan amount are you looking for?  (e.g., `3L`, `2,50,000`)");
+      return;
     }
 
-    if (result.status === "PENDING") {
-      return "Your KYC is pending. Please complete your KYC before proceeding.";
+    // Retry handling
+    setContext((c) => ({ ...c, kycAttempts: c.kycAttempts + 1 }));
+
+    if (context.kycAttempts === 0) {
+      addBot("I couldn’t find your KYC in our records.");
+      addBot("Please enter your full registered name or mobile number.");
+      return;
     }
 
-    if (result.status === "NOT_FOUND") {
-      return "I couldn’t find your KYC details. Please re-check your registered name or mobile number.";
+    if (context.kycAttempts === 1) {
+      addBot("Still having trouble finding your KYC.");
+      addBot("Try one of these:\n• `Aarav Sharma`\n• `9876543210`");
+      return;
     }
 
-    return "Something went wrong during verification. Please try again.";
+    // Exit gracefully
+    setStage(STAGES.DONE);
+    addBot("I’m unable to verify your KYC right now.");
+    addBot("You can try again later or contact support for manual verification.");
+    return;
 
-  } catch (error) {
-    console.error("KYC API error:", error);
-    return "⚠️ Unable to verify KYC right now. Please try again in a moment.";
+  } catch {
+    addBot("We’re facing a temporary issue verifying KYC. Please try again shortly.");
+    return;
   }
 }
-    //  STAGE 4: UNDERWRITING (placeholder)
-    
-    if (stage === "UNDERWRITING") {
-  const amount = extractIncome(userInput);
 
-  if (!amount || amount <= 0) {
-    return "Please enter a valid loan amount (e.g., 2,00,000 or 2L).";
-  }
-setContext((p) => ({ ...p, requestedAmount: amount }));
-  try {
-    const res = await fetch("http://localhost:5000/api/agent/underwrite", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        customer: context.customer,
-        income: context.income,
-        requestedAmount: amount,
-      }),
-    });
 
-    const result = await res.json();
+    // ---------------- STAGE 4: UNDERWRITING ----------------
+    if (stage === STAGES.UNDERWRITING) {
+      const amount = parseAmount(userInput);
+      if (!amount || amount <= 0) {
+        addBot("Please enter a valid loan amount.");
+        return;
+      }
 
-    // ❌ REJECTED
-    if (result.status === "REJECTED") {
-      setStage("DONE");
-      return (
-        `❌ Unfortunately, your loan cannot be approved.\n\n` +
-        `Reason: ${result.reason}\n` +
-        `Credit Score: ${result.creditScore}`
-      );
+      try {
+        await think("Evaluating your eligibility…");
+        const res = await fetch("/api/underwrite", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            customerId: context.customer._id,
+            income: context.income,
+            requestedAmount: amount,
+          }),
+        });
+
+        if (!res.ok) throw new Error("Underwriting failed");
+
+        const result = await res.json();
+        setStage(STAGES.DONE);
+
+        if (result.status === "APPROVED") {
+          addBot("🎉 Loan Approved!");
+          addBot(`Amount: ₹${amount.toLocaleString()}`);
+          addBot(`Estimated EMI: ₹${result.emi}`);
+          addBot("📄 Your sanction details are ready.");
+          return;
+        } else if (result.status === "SALARY_SLIP_REQUIRED") {
+          addBot("🧾 Additional verification required.");
+      addBot("Please upload your salary slip to continue.");
+      return;
+        } else {
+           addBot("❌ Loan Rejected");
+    addBot(`Reason: ${result.reason || "Eligibility criteria not met"}`);
+    addBot("You may try a lower amount or apply later.");
+    return;
+        }
+      } catch {
+        addBot("⚠️ Unable to process underwriting.");
+      }
+      return;
     }
-
-    // 🧾 SALARY SLIP REQUIRED
-    if (result.status === "SALARY_SLIP") {
-      setStage("DONE");
-      return (
-        `🧾 Additional verification required.\n\n` +
-        `Your credit score is ${result.creditScore}, but the requested amount exceeds your pre-approved limit of ₹${result.limit.toLocaleString()}.\n\n` +
-        `Please upload your salary slip to continue.`
-      );
-    }
-
-    // ✅ APPROVED
-    if (result.status === "APPROVED") {
-  // ✅ Trigger sanction letter AFTER underwriting approves
-  generateSanctionLetter({
-    customer: context.customer,
-    loanAmount: amount,
-    emi: result.emi,
-    creditScore: result.creditScore,
-  });
-
-  setStage("DONE");
-
-  return (
-    `🎉 **Loan Approved!**\n\n` +
-    `Approved Amount: ₹${amount.toLocaleString()}\n` +
-    `Credit Score: ${result.creditScore}\n` +
-    `Estimated EMI: ₹${result.emi}\n\n` +
-    `📄 Your **sanction letter has been generated and downloaded**.\n` +
-    `Thank you for choosing Tata Capital!`
-  );
-}
-
-    return "Something went wrong during underwriting. Please try again.";
-
-  } catch (error) {
-    console.error("Underwriting API error:", error);
-    return "⚠️ Unable to process underwriting right now. Please try again later.";
-  }
-}
-    // STAGE 5: DONE
-
-    return "Our conversation is complete 😊 If you’d like to start again, just say hi.";
   };
 
   return (
-    <div className="flex flex-col h-screen bg-gray-100">
-      <div className="bg-indigo-600 text-white p-4 font-semibold text-lg">
-        💬 Ava — Your Loan Assistant
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+    <div className="max-w-md mx-auto mt-10 border rounded-lg shadow">
+      <div className="h-96 overflow-y-auto p-4 space-y-2">
         {messages.map((m, i) => (
           <div
             key={i}
-            className={`flex ${m.sender.includes("You") ? "justify-end" : "justify-start"}`}
+            className={`p-2 rounded ${
+              m.sender === "bot"
+                ? "bg-gray-100 text-left"
+                : "bg-blue-500 text-white text-right"
+            }`}
           >
-            <div
-              className={`max-w-xs sm:max-w-md p-3 rounded-2xl ${
-                m.sender.includes("You")
-                  ? "bg-indigo-600 text-white rounded-br-none"
-                  : "bg-white text-gray-800 rounded-bl-none"
-              }`}
-            >
-              <p className="font-semibold text-sm">{m.sender}</p>
-              <p>{m.text}</p>
-              <p className="text-xs text-gray-400 text-right">
-                {m.time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-              </p>
-            </div>
+            {m.text}
           </div>
         ))}
-
-        {isTyping && (
-          <div className="text-gray-500 animate-pulse">Ava is typing…</div>
-        )}
-
-        <div ref={endRef} />
       </div>
 
-      <div className="p-3 border-t bg-white flex items-center">
+      <div className="flex border-t">
         <input
-          className="flex-1 border rounded-full px-4 py-2 focus:outline-none"
-          placeholder="Type your message…"
+          className="flex-1 p-2 outline-none"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+          placeholder="Type here..."
         />
         <button
-          onClick={sendMessage}
-          className="ml-2 bg-indigo-600 text-white p-2 rounded-full"
+          className="px-4 bg-blue-600 text-white"
+          onClick={handleSend}
         >
-          <Send size={18} />
+          Send
         </button>
       </div>
     </div>

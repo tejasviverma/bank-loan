@@ -4,15 +4,27 @@ import { runUnderwriting } from "../agents/underwritingAgent.js";
 
 const router = express.Router();
 
-router.post("/verify", (req, res) => {
-  const { input } = req.body;
-  const result = verifyCustomer(input);
-  res.json(result);
+// 🔐 KYC Verification
+router.post("/verify", async (req, res) => {
+  try {
+    const { input } = req.body;
+    const result = await verifyCustomer(input);
+    res.json(result);
+  } catch (err) {
+    console.error("Verify error:", err);
+    res.status(500).json({ error: "Verification failed" });
+  }
 });
 
-router.post("/underwrite", (req, res) => {
-  const result = runUnderwriting(req.body);
-  res.json(result);
+// 📊 Underwriting
+router.post("/underwrite", async (req, res) => {
+  try {
+    const result = await runUnderwriting(req.body);
+    res.json(result);
+  } catch (err) {
+    console.error("Underwriting error:", err);
+    res.status(500).json({ error: "Underwriting failed" });
+  }
 });
 
 export default router;
