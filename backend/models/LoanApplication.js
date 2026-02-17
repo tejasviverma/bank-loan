@@ -13,6 +13,11 @@ const loanApplicationSchema = new mongoose.Schema({
     enum: ["APPROVED", "REJECTED", "SALARY_SLIP_REQUIRED"],
   },
   emi: Number,
+  salarySlipName: String,
+  salaryVerified: {
+    type: Boolean,
+    default: false,
+  },
   createdAt: {
     type: Date,
     default: Date.now,
